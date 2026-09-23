@@ -125,18 +125,24 @@ if pd_st.session_state.itens:
 # --- 5. INTEGRAÇÃO COM GOOGLE SHEETS (DIRETA) ---
 def conectar_google_drive():
     try:
-        # Acessa diretamente os secrets configurados no Streamlit Cloud
-        if "gcp_service_account" in pd_st.secrets:
+        # Lê a partir da estrutura [connections.gsheets] configurada nos Secrets
+        if "connections" in pd_st.secrets and "gsheets" in pd_st.secrets["connections"]:
+            secrets_dict = dict(pd_st.secrets["connections"]["gsheets"])
+            if "-----BEGIN PRIVATE KEY-----" not in secrets_dict["private_key"]:
+                pk = secrets_dict["private_key"].replace('\\n', '\n')
+                secrets_dict["private_key"] = pk
+            return gspread.service_account_from_dict(secrets_dict)
+        elif "gcp_service_account" in pd_st.secrets: # Compatibilidade caso use o outro nome
             secrets_dict = dict(pd_st.secrets["gcp_service_account"])
             if "-----BEGIN PRIVATE KEY-----" not in secrets_dict["private_key"]:
                 pk = secrets_dict["private_key"].replace('\\n', '\n')
                 secrets_dict["private_key"] = pk
             return gspread.service_account_from_dict(secrets_dict)
         else:
-            pd_st.error("As credenciais 'gcp_service_account' não foram encontradas nos Secrets do Streamlit.")
+            pd_st.error("As credenciais do Google Sheets não foram encontradas nos Secrets do Streamlit.")
             return None
     except Exception as e:
-        pd_st.error(f"Erro na conexão com Google Drive: {e}")
+        pd_st.error(fog=f"Erro na conexão com Google Drive: {e}")
         return None
 
 def salvar_lead_na_planilha(prestador, cliente, condicoes):
