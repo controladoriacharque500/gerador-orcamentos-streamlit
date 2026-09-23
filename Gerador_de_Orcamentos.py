@@ -249,6 +249,6 @@ if pd_st.session_state.itens:
             pd_st.download_button(
                 label="📥 Baixar PDF Pronto",
                 data=f,
-                file_name=f"orcamento_cliente:{cliente['nome']}.pdf",
+                file_name=f"orcamento_cliente_{nome_cliente}.pdf",
                 mime="application/pdf"
             )
