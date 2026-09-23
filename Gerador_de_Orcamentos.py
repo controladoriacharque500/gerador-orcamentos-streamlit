@@ -2,7 +2,6 @@ import streamlit as pd_st
 import pandas as pd
 from fpdf import FPDF
 import tempfile
-import threading
 from datetime import datetime
 import gspread
 
@@ -46,7 +45,6 @@ with col1:
 with col2:
     pd_st.session_state.prestador["email"] = pd_st.text_input("Seu E-mail", value=pd_st.session_state.prestador["email"])
     
-# Campo estratégico para Afiliados e Inteligência de Nicho
 ramos_disponiveis = [
     "Obras e Reformas", 
     "Elétrica / Instalações", 
@@ -57,7 +55,6 @@ ramos_disponiveis = [
 ]
 
 ramo_atual = pd_st.session_state.prestador["ramo"]
-# Se o ramo salvo não estiver na lista padrão, tratamos como "Outros"
 idx_ramo = ramos_disponiveis.index(ramo_atual) if ramo_atual in ramos_disponiveis else (5 if ramo_atual else 0)
 
 escolha_ramo = pd_st.selectbox(
@@ -66,7 +63,6 @@ escolha_ramo = pd_st.selectbox(
     index=idx_ramo
 )
 
-# Se escolher "Outros", abre campo de texto livre para digitar o ramo específico
 if escolha_ramo == "Outros":
     pd_st.session_state.prestador["ramo_outro"] = pd_st.text_input(
         "Digite qual é a sua profissão/ramo:", 
@@ -126,7 +122,7 @@ if pd_st.session_state.itens:
     total_geral = df_itens["Total Parcial"].sum()
     pd_st.subheader(f"Valor Total do Orçamento: R$ {total_geral:.2f}")
 
-# --- 5. INTEGRAÇÃO COM GOOGLE SHEETS (BACKGROUND) ---
+# --- 5. INTEGRAÇÃO COM GOOGLE SHEETS (DIRETA) ---
 def conectar_google_drive():
     try:
         if "gcp_service_account" in pd_st.secrets:
@@ -138,16 +134,15 @@ def conectar_google_drive():
         else:
             return gspread.service_account(filename="google_secret.json")
     except Exception as e:
-        print(f"Erro na conexão com Google Drive: {e}")
+        pd_st.error(f"Erro na conexão com Google Drive: {e}")
         return None
 
-def salvar_lead_background(prestador, cliente, condicoes):
+def salvar_lead_na_planilha(prestador, cliente, condicoes):
     try:
         gc = conectar_google_drive()
         if gc:
-            # ATENÇÃO: Certifique-se de que o nome da sua planilha no Google Drive é exatamente este:
             sh = gc.open("Leads_Gerador_Orcamentos") 
-            worksheet = sh.worksheet("Leads") # E que a aba se chama exatamente 'Leads'
+            worksheet = sh.worksheet("Leads")
             
             data_atual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
@@ -162,12 +157,10 @@ def salvar_lead_background(prestador, cliente, condicoes):
                 prestador.get("ramo")
             ]
             worksheet.append_row(linha)
+            return True
     except Exception as e:
-        print(f"Erro ao salvar lead em segundo plano: {e}")
-
-def disparar_salvamento_async(prestador, cliente, condicoes):
-    t = threading.Thread(target=salvar_lead_background, args=(prestador, cliente, condicoes))
-    t.start()
+        pd_st.error(f"Erro ao salvar na planilha: {e}")
+        return False
 
 # --- 6. FUNÇÃO DE GERAÇÃO DE PDF ---
 def gerar_pdf(prestador, cliente, condicoes, itens, total):
@@ -175,7 +168,6 @@ def gerar_pdf(prestador, cliente, condicoes, itens, total):
     pdf.add_page()
     pdf.set_font("Arial", size=12)
     
-    # Cabeçalho
     pdf.set_font("Arial", "B", 16)
     pdf.cell(200, 10, txt="ORÇAMENTO DE SERVIÇOS", ln=True, align="C")
     pdf.set_font("Arial", size=10)
@@ -183,7 +175,6 @@ def gerar_pdf(prestador, cliente, condicoes, itens, total):
     pdf.cell(200, 5, txt=f"E-mail: {prestador['email']} | Ramo: {prestador['ramo']}", ln=True, align="C")
     pdf.ln(8)
     
-    # Cliente e Condições
     pdf.set_font("Arial", "B", 11)
     pdf.cell(200, 6, txt="Dados do Cliente:", ln=True)
     pdf.set_font("Arial", size=10)
@@ -197,7 +188,6 @@ def gerar_pdf(prestador, cliente, condicoes, itens, total):
     pdf.cell(200, 5, txt=f"Forma de Pagamento: {condicoes['pagamento']}", ln=True)
     pdf.ln(8)
     
-    # Tabela de Itens
     pdf.set_font("Arial", "B", 10)
     pdf.cell(100, 7, "Descrição", 1)
     pdf.cell(30, 7, "Qtd", 1, align="C")
@@ -214,7 +204,6 @@ def gerar_pdf(prestador, cliente, condicoes, itens, total):
         pdf.cell(30, 6, f"R$ {t_parcial:.2f}", 1, align="C")
         pdf.ln()
         
-    # Total
     pdf.ln(5)
     pdf.set_font("Arial", "B", 12)
     pdf.cell(160, 10, "VALOR TOTAL:", 0, 0, "R")
@@ -227,20 +216,27 @@ def gerar_pdf(prestador, cliente, condicoes, itens, total):
 # --- 7. BOTÃO DE GERAR PDF ---
 if pd_st.session_state.itens:
     if pd_st.button("Gerar PDF do Orçamento 🚀", type="primary"):
-        disparar_salvamento_async(
-            pd_st.session_state.prestador,
-            pd_st.session_state.cliente,
-            pd_st.session_state.condicoes
-        )
+        with pd_st.spinner("Registrando dados e gerando PDF..."):
+            # Salva de forma síncrona para garantir o envio correto
+            sucesso_planilha = salvar_lead_na_planilha(
+                pd_st.session_state.prestador,
+                pd_st.session_state.cliente,
+                pd_st.session_state.condicoes
+            )
+            
+            pdf_path = gerar_pdf(
+                pd_st.session_state.prestador,
+                pd_st.session_state.cliente,
+                pd_st.session_state.condicoes,
+                pd_st.session_state.itens,
+                total_geral
+            )
         
-        pdf_path = gerar_pdf(
-            pd_st.session_state.prestador,
-            pd_st.session_state.cliente,
-            pd_st.session_state.condicoes,
-            pd_st.session_state.itens,
-            total_geral
-        )
-        
+        if sucesso_planilha:
+            pd_st.success("Dados registrados na planilha e orçamento gerado com sucesso!")
+        else:
+            pd_st.warning("O PDF foi gerado, mas houve um alerta ao salvar na planilha. Verifique o painel.")
+            
         with open(pdf_path, "rb") as f:
             pd_st.download_button(
                 label="📥 Baixar PDF Pronto",
@@ -248,4 +244,3 @@ if pd_st.session_state.itens:
                 file_name="orcamento.pdf",
                 mime="application/pdf"
             )
-        pd_st.success("Orçamento gerado e dados registrados com sucesso!")
