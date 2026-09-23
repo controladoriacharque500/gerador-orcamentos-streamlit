@@ -125,6 +125,7 @@ if pd_st.session_state.itens:
 # --- 5. INTEGRAÇÃO COM GOOGLE SHEETS (DIRETA) ---
 def conectar_google_drive():
     try:
+        # Acessa diretamente os secrets configurados no Streamlit Cloud
         if "gcp_service_account" in pd_st.secrets:
             secrets_dict = dict(pd_st.secrets["gcp_service_account"])
             if "-----BEGIN PRIVATE KEY-----" not in secrets_dict["private_key"]:
@@ -132,7 +133,8 @@ def conectar_google_drive():
                 secrets_dict["private_key"] = pk
             return gspread.service_account_from_dict(secrets_dict)
         else:
-            return gspread.service_account(filename="google_secret.json")
+            pd_st.error("As credenciais 'gcp_service_account' não foram encontradas nos Secrets do Streamlit.")
+            return None
     except Exception as e:
         pd_st.error(f"Erro na conexão com Google Drive: {e}")
         return None
