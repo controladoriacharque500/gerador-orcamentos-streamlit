@@ -2,6 +2,9 @@ import streamlit as pd_st
 import pandas as pd
 from fpdf import FPDF
 import tempfile
+import threading
+from datetime import datetime
+import gspread
 
 # Configuração da Página
 pd_st.set_page_config(page_title="Gerador de Orçamentos Rápido", page_icon="📄", layout="centered")
@@ -14,7 +17,8 @@ if "prestador" not in pd_st.session_state:
     pd_st.session_state.prestador = {
         "nome": "João Serviços",
         "tel": "(21) 99999-9999",
-        "email": "joao@email.com"
+        "email": "joao@email.com",
+        "ramo": "Obras e Reformas"
     }
 
 if "cliente" not in pd_st.session_state:
@@ -40,6 +44,25 @@ with col1:
     pd_st.session_state.prestador["tel"] = pd_st.text_input("Seu Telefone / WhatsApp", value=pd_st.session_state.prestador["tel"])
 with col2:
     pd_st.session_state.prestador["email"] = pd_st.text_input("Seu E-mail", value=pd_st.session_state.prestador["email"])
+    
+# Campo estratégico para Afiliados e Inteligência de Nicho
+ramos_disponiveis = [
+    "Obras e Reformas", 
+    "Elétrica / Instalações", 
+    "Confeitaria / Alimentação", 
+    "Serviços Gerais / Manutenção", 
+    "Beleza e Estética", 
+    "Outros"
+]
+# Define o índice padrão se já existir
+ramo_atual = pd_st.session_state.prestador["ramo"]
+idx_ramo = ramos_disponiveis.index(ramo_atual) if ramo_atual in ramos_disponiveis else 0
+
+pd_st.session_state.prestador["ramo"] = pd_st.selectbox(
+    "Sua Profissão / Ramo de Atuação", 
+    options=ramos_disponiveis, 
+    index=idx_ramo
+)
 
 pd_st.divider()
 
@@ -72,7 +95,7 @@ with pd_st.form("form_item", clear_on_submit=True):
     desc = c1.text_input("Descrição do Item/Serviço")
     qtd = c2.number_input("Qtd", min_value=1, value=1)
     valor = c3.number_input("Valor Unitário (R$)", min_value=0.0, value=0.0, format="%.2f")
-
+    
     adicionar = pd_st.form_submit_button("Adicionar Item")
     if adicionar and desc:
         pd_st.session_state.itens.append({"descricao": desc, "qtd": qtd, "valor": valor})
@@ -82,45 +105,88 @@ with pd_st.form("form_item", clear_on_submit=True):
 if pd_st.session_state.itens:
     df_itens = pd.DataFrame(pd_st.session_state.itens)
     df_itens["Total Parcial"] = df_itens["qtd"] * df_itens["valor"]
-
+    
     pd_st.write("Itens adicionados:")
     pd_st.dataframe(df_itens, use_container_width=True)
-
+    
     if pd_st.button("Limpar Todos os Itens"):
         pd_st.session_state.itens = []
         pd_st.rerun()
-
+        
     total_geral = df_itens["Total Parcial"].sum()
     pd_st.subheader(f"Valor Total do Orçamento: R$ {total_geral:.2f}")
 
-# --- 5. FUNÇÃO DE GERAÇÃO DE PDF ---
+# --- 5. INTEGRAÇÃO COM GOOGLE SHEETS (BACKGROUND) ---
+def conectar_google_drive():
+    try:
+        if "gcp_service_account" in pd_st.secrets:
+            secrets_dict = dict(pd_st.secrets["gcp_service_account"])
+            if "-----BEGIN PRIVATE KEY-----" not in secrets_dict["private_key"]:
+                pk = secrets_dict["private_key"].replace('\\n', '\n')
+                secrets_dict["private_key"] = pk
+            return gspread.service_account_from_dict(secrets_dict)
+        else:
+            return gspread.service_account(filename="google_secret.json")
+    except Exception as e:
+        print(f"Erro na conexão com Google Drive: {e}")
+        return None
+
+def salvar_lead_background(prestador, cliente, condicoes):
+    try:
+        gc = conectar_google_drive()
+        if gc:
+            sh = gc.open("Leads_Gerador_Orcamentos") 
+            worksheet = sh.worksheet("Leads") # Acessa a aba exata 'Leads'
+            
+            data_atual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Ordem das colunas: Data/Hora, Nome Prestador, E-mail, Telefone, Nome Cliente, Validade, Pagamento, Sua Profissão / Ramo
+            linha = [
+                data_atual,
+                prestador.get("nome"),
+                prestador.get("email"),
+                prestador.get("tel"),
+                cliente.get("nome"),
+                condicoes.get("validade"),
+                condicoes.get("pagamento"),
+                prestador.get("ramo")
+            ]
+            worksheet.append_row(linha)
+    except Exception as e:
+        print(f"Erro ao salvar lead em segundo plano: {e}")
+
+def disparar_salvamento_async(prestador, cliente, condicoes):
+    t = threading.Thread(target=salvar_lead_background, args=(prestador, cliente, condicoes))
+    t.start()
+
+# --- 6. FUNÇÃO DE GERAÇÃO DE PDF ---
 def gerar_pdf(prestador, cliente, condicoes, itens, total):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-
+    
     # Cabeçalho
     pdf.set_font("Arial", "B", 16)
     pdf.cell(200, 10, txt="ORÇAMENTO DE SERVIÇOS", ln=True, align="C")
     pdf.set_font("Arial", size=10)
     pdf.cell(200, 5, txt=f"Emitido por: {prestador['nome']} | Tel: {prestador['tel']}", ln=True, align="C")
-    pdf.cell(200, 5, txt=f"E-mail: {prestador['email']}", ln=True, align="C")
+    pdf.cell(200, 5, txt=f"E-mail: {prestador['email']} | Ramo: {prestador['ramo']}", ln=True, align="C")
     pdf.ln(8)
-
+    
     # Cliente e Condições
     pdf.set_font("Arial", "B", 11)
     pdf.cell(200, 6, txt="Dados do Cliente:", ln=True)
     pdf.set_font("Arial", size=10)
     pdf.cell(200, 5, txt=f"Cliente: {cliente['nome']} (Tel: {cliente['tel']})", ln=True)
     pdf.ln(4)
-
+    
     pdf.set_font("Arial", "B", 11)
     pdf.cell(200, 6, txt="Condições:", ln=True)
     pdf.set_font("Arial", size=10)
     pdf.cell(200, 5, txt=f"Validade da Proposta: {condicoes['validade']}", ln=True)
     pdf.cell(200, 5, txt=f"Forma de Pagamento: {condicoes['pagamento']}", ln=True)
     pdf.ln(8)
-
+    
     # Tabela de Itens
     pdf.set_font("Arial", "B", 10)
     pdf.cell(100, 7, "Descrição", 1)
@@ -128,7 +194,7 @@ def gerar_pdf(prestador, cliente, condicoes, itens, total):
     pdf.cell(30, 7, "Preço Unit.", 1, align="C")
     pdf.cell(30, 7, "Total", 1, align="C")
     pdf.ln()
-
+    
     pdf.set_font("Arial", size=10)
     for item in itens:
         t_parcial = item["qtd"] * item["valor"]
@@ -137,21 +203,29 @@ def gerar_pdf(prestador, cliente, condicoes, itens, total):
         pdf.cell(30, 6, f"R$ {item['valor']:.2f}", 1, align="C")
         pdf.cell(30, 6, f"R$ {t_parcial:.2f}", 1, align="C")
         pdf.ln()
-
+        
     # Total
     pdf.ln(5)
     pdf.set_font("Arial", "B", 12)
     pdf.cell(160, 10, "VALOR TOTAL:", 0, 0, "R")
     pdf.cell(30, 10, f"R$ {total:.2f}", 1, 1, "C")
-
+    
     # Salvar em arquivo temporário
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     pdf.output(temp_file.name)
     return temp_file.name
 
-# --- 6. BOTÃO DE GERAR PDF ---
+# --- 7. BOTÃO DE GERAR PDF ---
 if pd_st.session_state.itens:
     if pd_st.button("Gerar PDF do Orçamento 🚀", type="primary"):
+        # Dispara o salvamento na planilha em segundo plano (Assíncrono - Sem Travar a UI!)
+        disparar_salvamento_async(
+            pd_st.session_state.prestador,
+            pd_st.session_state.cliente,
+            pd_st.session_state.condicoes
+        )
+        
+        # Gera o PDF instantaneamente
         pdf_path = gerar_pdf(
             pd_st.session_state.prestador,
             pd_st.session_state.cliente,
@@ -159,7 +233,7 @@ if pd_st.session_state.itens:
             pd_st.session_state.itens,
             total_geral
         )
-
+        
         with open(pdf_path, "rb") as f:
             pd_st.download_button(
                 label="📥 Baixar PDF Pronto",
@@ -167,4 +241,4 @@ if pd_st.session_state.itens:
                 file_name="orcamento.pdf",
                 mime="application/pdf"
             )
-        pd_st.success("Orçamento gerado com sucesso!")
+        pd_st.success("Orçamento gerado e dados registrados com sucesso!")
