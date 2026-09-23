@@ -244,11 +244,13 @@ if pd_st.session_state.itens:
             pd_st.success("Dados registrados na planilha e orçamento gerado com sucesso!")
         else:
             pd_st.warning("O PDF foi gerado, mas houve um alerta ao salvar na planilha. Verifique o painel.")
-            
+        
+        nome_cliente_atual = pd_st.session_state.cliente.get("nome", "cliente").strip().replace(" ", "_")
+        
         with open(pdf_path, "rb") as f:
             pd_st.download_button(
                 label="📥 Baixar PDF Pronto",
                 data=f,
-                file_name=f"orcamento_cliente_{nome_cliente}.pdf",
+                file_name=f"orcamento_{nome_cliente_atual}.pdf",
                 mime="application/pdf"
             )
