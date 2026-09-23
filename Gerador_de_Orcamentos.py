@@ -18,7 +18,8 @@ if "prestador" not in pd_st.session_state:
         "nome": "João Serviços",
         "tel": "(21) 99999-9999",
         "email": "joao@email.com",
-        "ramo": "Obras e Reformas"
+        "ramo": "Obras e Reformas",
+        "ramo_outro": ""
     }
 
 if "cliente" not in pd_st.session_state:
@@ -54,15 +55,26 @@ ramos_disponiveis = [
     "Beleza e Estética", 
     "Outros"
 ]
-# Define o índice padrão se já existir
-ramo_atual = pd_st.session_state.prestador["ramo"]
-idx_ramo = ramos_disponiveis.index(ramo_atual) if ramo_atual in ramos_disponiveis else 0
 
-pd_st.session_state.prestador["ramo"] = pd_st.selectbox(
+ramo_atual = pd_st.session_state.prestador["ramo"]
+# Se o ramo salvo não estiver na lista padrão, tratamos como "Outros"
+idx_ramo = ramos_disponiveis.index(ramo_atual) if ramo_atual in ramos_disponiveis else (5 if ramo_atual else 0)
+
+escolha_ramo = pd_st.selectbox(
     "Sua Profissão / Ramo de Atuação", 
     options=ramos_disponiveis, 
     index=idx_ramo
 )
+
+# Se escolher "Outros", abre campo de texto livre para digitar o ramo específico
+if escolha_ramo == "Outros":
+    pd_st.session_state.prestador["ramo_outro"] = pd_st.text_input(
+        "Digite qual é a sua profissão/ramo:", 
+        value=pd_st.session_state.prestador.get("ramo_outro", "")
+    )
+    pd_st.session_state.prestador["ramo"] = pd_st.session_state.prestador["ramo_outro"] if pd_st.session_state.prestador["ramo_outro"] else "Outros"
+else:
+    pd_st.session_state.prestador["ramo"] = escolha_ramo
 
 pd_st.divider()
 
@@ -89,7 +101,6 @@ pd_st.divider()
 # --- 4. PRODUTOS / SERVIÇOS ---
 pd_st.header("4. Produtos / Serviços")
 
-# Formulário para adicionar item
 with pd_st.form("form_item", clear_on_submit=True):
     c1, c2, c3 = pd_st.columns([3, 1, 1])
     desc = c1.text_input("Descrição do Item/Serviço")
@@ -101,7 +112,6 @@ with pd_st.form("form_item", clear_on_submit=True):
         pd_st.session_state.itens.append({"descricao": desc, "qtd": qtd, "valor": valor})
         pd_st.rerun()
 
-# Exibir tabela de itens atuais
 if pd_st.session_state.itens:
     df_itens = pd.DataFrame(pd_st.session_state.itens)
     df_itens["Total Parcial"] = df_itens["qtd"] * df_itens["valor"]
@@ -135,12 +145,12 @@ def salvar_lead_background(prestador, cliente, condicoes):
     try:
         gc = conectar_google_drive()
         if gc:
+            # ATENÇÃO: Certifique-se de que o nome da sua planilha no Google Drive é exatamente este:
             sh = gc.open("Leads_Gerador_Orcamentos") 
-            worksheet = sh.worksheet("Leads") # Acessa a aba exata 'Leads'
+            worksheet = sh.worksheet("Leads") # E que a aba se chama exatamente 'Leads'
             
             data_atual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            # Ordem das colunas: Data/Hora, Nome Prestador, E-mail, Telefone, Nome Cliente, Validade, Pagamento, Sua Profissão / Ramo
             linha = [
                 data_atual,
                 prestador.get("nome"),
@@ -210,7 +220,6 @@ def gerar_pdf(prestador, cliente, condicoes, itens, total):
     pdf.cell(160, 10, "VALOR TOTAL:", 0, 0, "R")
     pdf.cell(30, 10, f"R$ {total:.2f}", 1, 1, "C")
     
-    # Salvar em arquivo temporário
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     pdf.output(temp_file.name)
     return temp_file.name
@@ -218,14 +227,12 @@ def gerar_pdf(prestador, cliente, condicoes, itens, total):
 # --- 7. BOTÃO DE GERAR PDF ---
 if pd_st.session_state.itens:
     if pd_st.button("Gerar PDF do Orçamento 🚀", type="primary"):
-        # Dispara o salvamento na planilha em segundo plano (Assíncrono - Sem Travar a UI!)
         disparar_salvamento_async(
             pd_st.session_state.prestador,
             pd_st.session_state.cliente,
             pd_st.session_state.condicoes
         )
         
-        # Gera o PDF instantaneamente
         pdf_path = gerar_pdf(
             pd_st.session_state.prestador,
             pd_st.session_state.cliente,
